@@ -212,14 +212,14 @@ static void test05(struct sb *sb, block_t blocks)
 	block_t bits = 1 << (3 + sb->blockbits);
 
 	for (int i = 0; i < 2; i++) {
-		struct block_segment seg;
+		struct block_segment seg[2];
 		unsigned n = bits;
 		int segs;
 		/* Alloc blocks on a bitmap page */
-		test_assert(balloc_segs(sb, &seg, 1, &segs, &n) == 0);
+		test_assert(balloc_segs(sb, seg, 2, &segs, &n) == 0);
 		test_assert(segs == 1 && n == 0);
-		test_assert(seg.block == i * bits);
-		test_assert(seg.count == bits);
+		test_assert(seg[0].block == i * bits);
+		test_assert(seg[0].count == bits);
 		test_assert(bitmap_all_set(sb, i * bits, bits));
 	}
 	test_assert(bitmap_all_set(sb, 0, 2 * bits));
@@ -237,8 +237,8 @@ static void test05(struct sb *sb, block_t blocks)
 /* Fill whole bitmap and free */
 static void test06(struct sb *sb, block_t blocks)
 {
-#define ALLOC_UNIT	8
-	block_t total = blocks << (sb->blockbits + 3);
+	enum { ALLOC_UNIT = 8 };
+	block_t total = sb->volblocks;
 	struct block_segment *seg;
 	int nr = total / ALLOC_UNIT;
 
@@ -327,16 +327,16 @@ static void initialize_buffer(struct inode *inode, block_t block)
 
 int main(int argc, char *argv[])
 {
-#define BITMAP_BLOCKS	10
-
+	enum { BITMAP_BLOCKS = 10, groupbits = 5 };
 	struct dev *dev = &(struct dev){ .bits = 3 };
 	/* This expect buffer is never reclaimed */
 	init_buffers(dev, 1 << 20, 1);
 
-	block_t volblocks = BITMAP_BLOCKS << (dev->bits + 3);
+	block_t volblocks = (BITMAP_BLOCKS << (dev->bits + 3)) - 3;
 	struct sb *sb = rapid_sb(dev);
 	sb->super = INIT_DISKSB(dev->bits, volblocks);
 	setup_sb(sb, &sb->super);
+	sb->groupbits = groupbits;
 
 	test_init(argv[0]);
 
@@ -345,11 +345,14 @@ int main(int argc, char *argv[])
 	struct inode *countmap = rapid_open_inode(sb, NULL, 0);
 	sb->countmap = countmap;
 
+	block_t groups = (volblocks + (1 << groupbits) - 1) >> groupbits;
+	block_t groupblocks = (2 * groups + sb->blocksize - 1) >> sb->blockbits;
+
 	/* Setup buffers for bitmap/countmap */
-	for (int block = 0; block < BITMAP_BLOCKS; block++) {
+	for (int block = 0; block < BITMAP_BLOCKS; block++)
 		initialize_buffer(sb->bitmap, block);
+	for (int block = 0; block < groupblocks; block++)
 		initialize_buffer(sb->countmap, block);
-	}
 
 	/* Set fake backend mark to modify backend objects. */
 	tux3_start_backend(sb);
